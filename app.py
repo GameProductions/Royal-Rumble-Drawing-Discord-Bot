@@ -391,3 +391,6 @@ async def my_entries_slash(interaction: discord.Interaction):
         entries = cursor.fetchall()
         if entries:
             message = "Your drawing entries:\n"
+
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")

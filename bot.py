@@ -234,6 +234,8 @@ async def my_entries(ctx):
     except psycopg2.Error as e:
         await ctx.send(f"Error retrieving entries: {e}")
     except Exception as e:
+        await ctx.send(f"Error retrieving entries: {e}")
+    except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
 @bot.command()
