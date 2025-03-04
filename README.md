@@ -31,6 +31,8 @@ DB_PASSWORD=your_db_password
 DB_NAME=your_db_name
 DISCORD_BOT_TOKEN=your_bot_token
 
+Note: You can also rename the existing `rename_to_.env` file to `.env` and update your variables in that file accordingly.
+
 3. Build and run the Docker containers: `docker-compose up -d --build`
 
 ## Usage
