@@ -25,11 +25,11 @@ This bot manages drawings and raffles within a Discord server.
 1. Clone this repository: `git clone https://github.com/GameProductions/Royal-Rumble-Drawing-Discord-Bot.git`
 2. Create a `.env` file with the following variables:
 
-DB_HOST=db
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_NAME=your_db_name
-DISCORD_BOT_TOKEN=your_bot_token
+    DB_HOST=db
+    DB_USER=your_db_user
+    DB_PASSWORD=your_db_password
+    DB_NAME=your_db_name
+    DISCORD_BOT_TOKEN=your_bot_token
 
 Note: You can also rename the existing `rename_to_.env` file to `.env` and update your variables in that file accordingly.
 
