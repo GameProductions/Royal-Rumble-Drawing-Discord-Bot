@@ -168,12 +168,15 @@ def verify_signature(public_key, timestamp, body, signature):
         return True
 
     except nacl.exceptions.BadSignatureError:
+        print("Bad signature error")
         return False
+    
     except ValueError as e:
-        print(f"Error in verify_signature - Value Error: {e}")
+        print(f"ValueError: {e}")
         return False
+    
     except Exception as e:
-        print(f"Error in verify_signature - General Error: {e}")
+        print(f"An unexpected error occurred: {e}")
         return False
 
 
