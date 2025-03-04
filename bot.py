@@ -390,4 +390,11 @@ async def add_entry(ctx, drawing_name: str, users: commands.Greedy[discord.Membe
         cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
         drawing_id = cursor.fetchone()
         if not drawing_id:
-            await ctx
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+    except psycopg2.Error as e:
+        await ctx.send(f"Error adding entry: {e}")
+        mydb.rollback()
+    except Exception as e:
+        await ctx.send(f"An unexpected error occurred: {e}")
+        mydb.rollback()

@@ -391,6 +391,132 @@ async def my_entries_slash(interaction: discord.Interaction):
         entries = cursor.fetchall()
         if entries:
             message = "Your drawing entries:\n"
+            for entry in entries:
+                message += f"- {entry[4]}: Entrant number {entry[0]}"
+                if entry[1]:
+                    message += f", Name: {entry[1]}"
+                message += f", Status: {entry[2]}"
+                if entry[2] == 'eliminated' and entry[3]:
+                    message += f", Eliminated by: {entry[3]}"
+                message += "\n"
+            await interaction.response.send_message(message, ephemeral=True)
+        else:
+            await interaction.response.send_message("You haven't joined any drawings yet.", ephemeral=True)
+    except psycopg2.Error as e:
+        await interaction.response.send_message(f"Error retrieving entries: {e}")
+    except Exception as e:
+        await interaction.response.send_message(f"Error retrieving entries: {e}")
+
+    except Exception as e:
+        await interaction.response.send_message(f"An unexpected error occurred: {e}")
+
+
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
+
+# --- Drawing Entries ---
+
+@bot.tree.command(name="drawing_entries", description="Displays the entries for a specific drawing.")
+@app_commands.describe(name="The name of the drawing.", include_archived="Whether to include archived entries (yes/no).")
+@commands.has_permissions(administrator=True)
+async def drawing_entries_slash(interaction: discord.Interaction, name: str, include_archived: str = "no"):
+    """Displays the entries for a specific drawing in a table format (slash command)."""
+    try:
+        if include_archived.lower() == "yes":
+            cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (name,))
+            drawing_id = cursor.fetchone()
+            if not drawing_id:
+                cursor.execute("SELECT drawing_id FROM archived_drawings WHERE name = %s", (name,))
+                drawing_id = cursor.fetchone()
+                if not drawing_id:
+                    await interaction.response.send_message(f"Drawing '{name}' not found.")
+                    return
+        else:
+            cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (name,))
+            drawing_id = cursor.fetchone()
+            if not drawing_id:
+                await interaction.response.send_message(f"Drawing '{name}' not found.")
+                return
+
+        cursor.execute("SELECT entrant_number, entrant_name FROM entries WHERE drawing_id = %s", (drawing_id[0],))
+        entries = cursor.fetchall()
+
+        if not entries:
+            await interaction.response.send_message(f"No entries found for drawing '{name}'.")
+            return
+
+        table_data = []
+        for entrant_number, entrant_name in entries:
+            cursor.execute("SELECT user_id FROM entry_users WHERE entry_id = (SELECT entry_id FROM entries WHERE entrant_number = %s AND drawing_id = %s)", (entrant_number, drawing_id[0]))
+            user_ids = [row[0] for row in cursor.fetchall()]
+            user_mentions = [bot.get_user(user_id).mention for user_id in user_ids if bot.get_user(user_id)]
+
+            cursor.execute("SELECT winner_id FROM results WHERE drawing_id = %s", (drawing_id[0],))
+            winner_entry_id = cursor.fetchone()
+            if winner_entry_id and winner_entry_id[0] == entrant_number:
+                table_data.append([f"**{entrant_number}**", f"**{entrant_name or ''}** 🏆", f"**{', '.join(user_mentions) or 'No users found'}**"])
+            else:
+                table_data.append([entrant_number, entrant_name or "", ", ".join(user_mentions) or "No users found"])
+
+        table = tabulate(table_data, headers=["Entrant Number", "Entrant Name", "Users"], tablefmt="simple")
+        await interaction.response.send_message(f"**Entries for drawing '{name}'**:\n```\n{table}\n```")
+
+    except psycopg2.Error as e:
+        await interaction.response.send_message(f"Error retrieving drawing entries: {e}")
+    except Exception as e:
+        await interaction.response.send_message(f"An unexpected error occurred: {e}")
+
+@bot.command(name="drawing_entries")
+@commands.has_permissions(administrator=True)
+async def drawing_entries_text(ctx, name: str, include_archived: str = "no"):
+    """Displays the entries for a specific drawing in a table format (text command)."""
+    try:
+        if include_archived.lower() == "yes":
+            cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (name,))
+            drawing_id = cursor.fetchone()
+            if not drawing_id:
+                cursor.execute("SELECT drawing_id FROM archived_drawings WHERE name = %s", (name,))
+                drawing_id = cursor.fetchone()
+                if not drawing_id:
+                    await ctx.send(f"Drawing '{name}' not found.")
+                    return
+        else:
+            cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (name,))
+            drawing_id = cursor.fetchone()
+            if not drawing_id:
+                await ctx.send(f"Drawing '{name}' not found.")
+                return
+
+        cursor.execute("SELECT entrant_number, entrant_name FROM entries WHERE drawing_id = %s", (drawing_id[0],))
+        entries = cursor.fetchall()
+
+        if not entries:
+            await ctx.send(f"No entries found for drawing '{name}'.")
+            return
+
+        table_data = []
+        for entrant_number, entrant_name in entries:
+            cursor.execute("SELECT user_id FROM entry_users WHERE entry_id = (SELECT entry_id FROM entries WHERE entrant_number = %s AND drawing_id = %s)", (entrant_number, drawing_id[0]))
+            user_ids = [row[0] for row in cursor.fetchall()]
+            user_mentions = [bot.get_user(user_id).mention for user_id in user_ids if bot.get_user(user_id)]
+
+            cursor.execute("SELECT winner_id FROM results WHERE drawing_id = %s", (drawing_id[0],))
+            winner_entry_id = cursor.fetchone()
+            if winner_entry_id and winner_entry_id[0] == entrant_number:
+                table_data.append([f"**{entrant_number}**", f"**{entrant_name or ''}** 🏆", f"**{', '.join(user_mentions) or 'No users found'}**"])
+            else:
+                table_data.append([entrant_number, entrant_name or "", ", ".join(user_mentions) or "No users found"])
+
+        table = tabulate(table_data, headers=["Entrant Number", "Entrant Name", "Users"], tablefmt="simple")
+        await ctx.send(f"**Entries for drawing '{name}'**:\n```\n{table}\n```")
+
+    except psycopg2.Error as e:
+        await ctx.send(f"Error retrieving drawing entries: {e}")
+    except Exception as e:
+        await ctx.send(f"An unexpected error occurred: {e}")
+
+
+
+
+
