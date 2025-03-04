@@ -4,3 +4,4 @@ tabulate
 Flask
 gunicorn
 python-dotenv
+PyNaCl

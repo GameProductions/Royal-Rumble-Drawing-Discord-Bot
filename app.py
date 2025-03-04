@@ -11,6 +11,8 @@ import random
 from tabulate import tabulate
 import nacl.signing
 import nacl.exceptions
+import nacl.signing
+import nacl.exceptions
 
 # Load environment variables from .env file
 load_dotenv()
@@ -516,7 +518,16 @@ async def drawing_entries_text(ctx, name: str, include_archived: str = "no"):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
+@bot.command()
+async def test(ctx):
+    """Test command."""
+    await ctx.send("Test command works!")
 
 
+@bot.command()
+async def test_admin(ctx):
+    """Test command."""
+    if admin_role_id is not None:
+        await ctx.send(f"Admin role id is {admin_role_id}")
 
 
