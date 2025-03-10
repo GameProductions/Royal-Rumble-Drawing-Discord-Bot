@@ -17,7 +17,9 @@ eggs/
 lib/
 lib64/
 parts/
+pytest.ini
 sdist/
+tests/
 var/
 wheels/
 share/python-wheels/
