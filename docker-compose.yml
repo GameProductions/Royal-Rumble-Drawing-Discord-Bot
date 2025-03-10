@@ -35,5 +35,5 @@ volumes:
   postgres_data:
 networks:
   default:
-    name: general
-    external: true
+    name: rrddb_test
+    external: false
