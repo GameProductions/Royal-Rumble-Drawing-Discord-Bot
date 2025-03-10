@@ -1,4 +1,5 @@
 discord.py
+psycopg2
 psycopg2-binary
 tabulate
 Flask
