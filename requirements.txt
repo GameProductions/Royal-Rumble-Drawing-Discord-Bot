@@ -1,5 +1,6 @@
 discord.py
-psycopg2-binary
+# psycopg2-binary
+psycopg2
 tabulate
 Flask
 gunicorn

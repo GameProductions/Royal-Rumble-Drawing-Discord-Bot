@@ -8,7 +8,7 @@ services:
         DB_NAME: ${DB_NAME}
     command: python bot.py
     environment:
-      - DB_HOST=${DB_HOST}
+      - DB_HOST=db # ${DB_HOST}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
@@ -29,6 +29,11 @@ services:
       - "8000:8000"
     networks:
       - default
+    environment:
+      - DB_HOST=db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
     #depends_on:
      # - db
   db:
@@ -43,10 +48,6 @@ services:
       - POSTGRES_DB=${DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    command:
-      - postgres
-      - -c
-      - 'initdb --username=${DB_USER} --pwfile=/docker-entrypoint-initdb.d/initdb.sql'
 
 volumes:
   postgres_data:

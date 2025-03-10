@@ -26,10 +26,11 @@ RUN mkdir -p /docker-entrypoint-initdb.d/ && \
 # Copy the requirements file
 COPY requirements.txt .
 
+# Install build tools, postgresql development files
+RUN apt-get update && apt-get install -y build-essential libpq-dev
+
 # Install dependencies with trusted hosts
-# RUN PIP_DISABLE_PIP_VERSION_CHECK=1 pip install -r requirements.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
 RUN pip install --no-cache-dir -r requirements.txt
-# RUN pip install -r requirements.txt --index-url https://pypi.org/simple
 
 # Install Git
 RUN apt-get update && apt-get install -y git
