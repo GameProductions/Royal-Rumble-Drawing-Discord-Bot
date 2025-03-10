@@ -63,7 +63,8 @@ jobs:
 
       # Extract metadata (tags, labels) for Docker
       - name: Print GitHub Actor
-        run: echo "GitHub Actor (Username): ${{ '{' }}{{ github.actor }}{{ '}' }}"
+        run: echo "GitHub Actor (Username):"" ${{ github.actor }}"
+        shell: bash
 
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
