@@ -61,10 +61,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Extract metadata (tags, labels) for Docker
       - name: Print GitHub Actor
         run: echo "GitHub Actor (Username): ${{ github.actor }}"
-        
-      # Extract metadata (tags, labels) for Docker
+
       # https://github.com/docker/metadata-action
       - name: Extract Docker metadata
         id: meta
