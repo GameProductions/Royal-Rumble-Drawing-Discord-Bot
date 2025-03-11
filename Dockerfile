@@ -7,10 +7,10 @@ ARG DB_PASSWORD
 ARG DB_NAME
 
 # Create a directory for the application
-# RUN mkdir /app
+RUN mkdir /app
 
 # Create a directory for the database
-# RUN mkdir /db
+RUN mkdir /db
 
 # Set the working directory in the container
 WORKDIR /app
@@ -19,9 +19,6 @@ WORKDIR /app
 RUN mkdir -p /docker-entrypoint-initdb.d/ && \
     echo "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';" > /docker-entrypoint-initdb.d/initdb.sql && \
     echo "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >> /docker-entrypoint-initdb.d/initdb.sql
-
-# Upgrade pip to the latest version
-# RUN python -m pip install --upgrade pip
 
 # Copy the requirements file
 COPY requirements.txt .

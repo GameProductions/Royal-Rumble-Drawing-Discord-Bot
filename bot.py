@@ -12,7 +12,7 @@ import datetime
 load_dotenv()
 
 # Access environment variables
-DB_HOST = os.getenv('DB_HOST')
+DB_HOST = "db"
 DB_USER = os.getenv('DB_USER')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 DB_NAME = os.getenv('DB_NAME')
@@ -100,26 +100,64 @@ except psycopg2.Error as e:
     mydb.rollback()
     exit()
 
-#bot = commands.Bot(command_prefix='!') #commented out for testing and can be removed if everything works
-intents = discord.Intents.all()
+# Initialize the bot
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 
-bot = commands.Bot(command_prefix='!',intents=intents)
+# Variable to store the selected channel ID (Default=None)
+selected_channel_id = None
 
-# Admin role ID (initially None)
+# Variable to store the admin role ID (Default=None)
 admin_role_id = None
 
 # --- Discord bot commands ---
 
+# --- Bot Ready Event ---
+@bot.event
+async def on_ready():
+    try:
+        print(f"Bot activated. Logged in as {bot.user}")
+    except Exception as e:
+        print(f"An error occurred during the on_ready event: {e}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def set_channel(ctx, channel: discord.TextChannel):
+    """Sets the channel for the bot to use. (Admin Only, Text Command)"""
+    try:
+        global selected_channel_id
+        selected_channel_id = channel.id
+        await ctx.send(f"Channel set to {channel.mention}")
+    except Exception as e:
+        await ctx.send(f"Error setting channel: {e}")
+
+@bot.command()
+async def test_channel(ctx):
+    """Sends a test message to the selected channel. (User, Text Command)"""
+    try:
+        if selected_channel_id is None:
+            await ctx.send("No channel has been selected. Use `!set_channel` to select a channel.")
+            return
+
+        channel = bot.get_channel(selected_channel_id)
+        if channel is None:
+            await ctx.send("The selected channel could not be found. Please check the channel ID or set a new channel.")
+            return
+
+        await channel.send("This is a test message from the bot!")
+    except Exception as e:
+        await ctx.send(f"Error sending test message: {e}")
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def set_admin_role(ctx, role: discord.Role):
-    """Sets the specified role as the admin role for the bot."""
+    """Sets the specified role as the admin role for the bot. (Admin Only, Text Command)"""
     try:
         global admin_role_id
         admin_role_id = role.id
         await ctx.send(f"Role '{role.name}' has been set as the admin role.")
     except Exception as e:
         await ctx.send(f"Error setting admin role: {e}")
+
 
 # Custom decorator to check for admin role
 def has_admin_permissions():
@@ -129,9 +167,10 @@ def has_admin_permissions():
         return ctx.author.get_role(admin_role_id) is not None
     return commands.check(predicate)
 
+# --- Create Drawing ---
 @bot.command()
 async def create_drawing(ctx, name: str):
-    """Creates a new drawing."""
+    """Creates a new drawing. (User, Text Command)"""
     try:
         cursor.execute("INSERT INTO drawings (name) VALUES (%s)", (name,))
         mydb.commit()
@@ -146,10 +185,11 @@ async def create_drawing(ctx, name: str):
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
+# --- Create Test Drawing ---
 @bot.command()
 @has_admin_permissions()
 async def create_test_drawing(ctx, name: str):
-    """Creates a test drawing that does not save results."""
+    """Creates a test drawing that does not save results. (Admin Only, Text Command)"""
     try:
         cursor.execute("INSERT INTO drawings (name, status) VALUES (%s, 'open')", (f"test_{name}",))
         mydb.commit()
@@ -164,9 +204,8 @@ async def create_test_drawing(ctx, name: str):
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
-@bot.command()
+# --- Join Drawing ---
 async def join_drawing(ctx, name: str):
-    """Joins a drawing."""
     try:
         cursor.execute("SELECT drawing_id, status FROM drawings WHERE name = %s", (name,))
         result = cursor.fetchone()
@@ -208,9 +247,10 @@ async def join_drawing(ctx, name: str):
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
+# --- My Entries ---
 @bot.command()
 async def my_entries(ctx):
-    """Displays the user's entries."""
+    """Displays the user's entries. (User, Text Command)"""
     try:
         cursor.execute("SELECT e.entrant_number, e.entrant_name, e.status, e.eliminated_by, d.name, e.drawing_id "
                     "FROM entries e "
@@ -238,12 +278,13 @@ async def my_entries(ctx):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
+# --- Drawing Entries ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def drawing_entries(ctx, name: str, include_archived: str = "no"):
-    """Displays the entries for a specific drawing in a table format.
+    """Displays the entries for a specific drawing in a table format. (Admin Only)
 
-    include_archived: Whether to include archived entries. Options: 'yes', 'no' (default: 'no')
+    include_archived: Whether to include archived entries. Options: 'yes', 'no' (default: 'no') (Admin Only, Text Command)
     """
     try:
         if include_archived.lower() == "yes":
@@ -290,10 +331,11 @@ async def drawing_entries(ctx, name: str, include_archived: str = "no"):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
+# --- Start Drawing ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def start_drawing(ctx, name: str):
-    """Starts a drawing."""
+    """Starts a drawing. (Admin Only, Text Command)"""
     try:
         cursor.execute("UPDATE drawings SET status = 'open' WHERE name = %s", (name,))
         mydb.commit()
@@ -308,10 +350,11 @@ async def start_drawing(ctx, name: str):
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
+# --- Stop Drawing ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def stop_drawing(ctx, name: str):
-    """Stops a drawing."""
+    """Stops a drawing. (Admin Only, Text Command)"""
     try:
         cursor.execute("UPDATE drawings SET status = 'closed' WHERE name = %s", (name,))
         mydb.commit()
@@ -326,10 +369,11 @@ async def stop_drawing(ctx, name: str):
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
+# --- Drawing Status ---
 @bot.command()
 async def drawing_status(ctx, name: str, include_archived: str = "no"):
-    """Displays the status of a drawing.
-
+    """Displays the status of a drawing. (User)
+    
     include_archived: Whether to include archived drawings. Options: 'yes', 'no' (default: 'no')
     """
     try:
@@ -356,10 +400,11 @@ async def drawing_status(ctx, name: str, include_archived: str = "no"):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
+# --- Change Entrant ---
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def change_entrant(ctx, drawing_name: str, old_entrant_number: int, new_entrant_number: int):
-    """Changes the entrant number for a drawing entry."""
+    """Changes the entrant number for a drawing entry. (Admin Only, Text Command)"""
     try:
         cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
         drawing_id = cursor.fetchone()
@@ -382,10 +427,11 @@ async def change_entrant(ctx, drawing_name: str, old_entrant_number: int, new_en
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
 
+# --- Add Entry ---
 @bot.command()
 @has_admin_permissions()
 async def add_entry(ctx, drawing_name: str, users: commands.Greedy[discord.Member], entrant_number: int = None, entrant_name: str = None):
-    """Adds an entry with multiple users in a drawing."""
+    """Adds an entry with multiple users in a drawing. (Admin Only, Text Command)"""
     try:
         cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
         drawing_id = cursor.fetchone()
@@ -398,3 +444,5 @@ async def add_entry(ctx, drawing_name: str, users: commands.Greedy[discord.Membe
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
         mydb.rollback()
+
+bot.run(DISCORD_BOT_TOKEN)  # Run the bot with the specified token
