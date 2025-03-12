@@ -10,7 +10,7 @@ ARG DB_NAME
 RUN mkdir /app
 
 # Create a directory for the database
-RUN mkdir /db
+RUN mkdir /database
 
 # Set the working directory in the container
 WORKDIR /app

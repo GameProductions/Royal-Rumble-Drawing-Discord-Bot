@@ -9,6 +9,8 @@ services:
         DB_USER: ${DB_USER}
         DB_PASSWORD: ${DB_PASSWORD}
         DB_NAME: ${DB_NAME}
+        UID: ${UID} # User ID for the bot
+        GID: ${GID} # Group ID for the bot
     command: python bot.py  # Command to run the bot
     environment:
       # Set environment variables for the bot
@@ -34,6 +36,8 @@ services:
         DB_USER: ${DB_USER}
         DB_PASSWORD: ${DB_PASSWORD}
         DB_NAME: ${DB_NAME}
+        UID: ${UID} # User ID for the web app
+        GID: ${GID} # Group ID for the web app
     command: gunicorn --bind 0.0.0.0:8000 app:app  # Command to run the web app
     ports:
       # Map port 8000 on the host to port 8000 on the container
@@ -62,8 +66,8 @@ services:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_DB=${DB_NAME}
     volumes:
-      # Mount the local "postgres_data" folder to the container's data folder
-      - ./postgres_data:/var/lib/postgresql/data
+      # Mount the local "database" folder to the container's data folder
+      - ./database:/var/lib/postgresql/data
     # healthcheck:
      # test: ["CMD-SHELL", "pg_isready -U postgres"]
       #interval: 10s
@@ -72,7 +76,7 @@ services:
 
 volumes:
   # Define a named volume for PostgreSQL data
-  postgres_data:
+  database:
 
 networks:
   # Define the default network
