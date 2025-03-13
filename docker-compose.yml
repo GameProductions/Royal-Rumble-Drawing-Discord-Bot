@@ -1,39 +1,85 @@
 services:
   bot:
-    build: .
-    command: python bot.py
+    # Configuration for the Discord bot service
+    build:
+      # Specifies how to build the Docker image for the bot
+      context: .  # Use the current directory as the build context
+      args:
+        # Pass environment variables as build arguments
+        DB_USER: ${DB_USER}
+        DB_PASSWORD: ${DB_PASSWORD}
+        DB_NAME: ${DB_NAME}
+        UID: ${UID} # User ID for the bot
+        GID: ${GID} # Group ID for the bot
+    command: python bot.py  # Command to run the bot
     environment:
-      - DB_HOST=DB_HOST
-      - DB_USER=DB_USER
-      - DB_PASSWORD=DB_PASSWORD
-      - DB_NAME=DB_NAME
-      - DISCORD_BOT_TOKEN=DISCORD_BOT_TOKEN
+      # Set environment variables for the bot
+      - DB_HOST=db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
     depends_on:
+      # Define dependency on the database service
       - db
     networks:
+      # Connect the bot to the default network
       - default
   web:
-    build: .
-    command: gunicorn --bind 0.0.0.0:8000 app:app
+    # Configuration for the web service
+    build:
+      # Specifies how to build the Docker image for the web service
+      context: .  # Use the current directory as the build context
+      args:
+        # Pass environment variables as build arguments
+        DB_HOST: db
+        DB_USER: ${DB_USER}
+        DB_PASSWORD: ${DB_PASSWORD}
+        DB_NAME: ${DB_NAME}
+        UID: ${UID} # User ID for the web app
+        GID: ${GID} # Group ID for the web app
+    command: gunicorn --bind 0.0.0.0:8000 app:app  # Command to run the web app
     ports:
+      # Map port 8000 on the host to port 8000 on the container
       - "8000:8000"
     networks:
+      # Connect the web service to the default network
       - default
+    environment:
+      - DB_HOST=db
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
     depends_on:
       - db
   db:
     image: postgres:latest  # Use PostgreSQL image
     networks:
+      # Connect the database to the default network
       - default
+    ports:
+      # Map port 5432 on the host to port 5432 on the container
+      - "5432:5432"
     environment:
-      - POSTGRES_PASSWORD=DB_PASSWORD
-      - POSTGRES_USER=DB_USER
-      - POSTGRES_DB=DB_NAME
+      # Set environment variables for the database
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_DB=${DB_NAME}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Mount the local "database" folder to the container's data folder
+      - ./database:/var/lib/postgresql/data
+    # healthcheck:
+     # test: ["CMD-SHELL", "pg_isready -U postgres"]
+      #interval: 10s
+      #timeout: 5s
+      #retries: 5
+
 volumes:
-  postgres_data:
+  # Define a named volume for PostgreSQL data
+  database:
+
 networks:
+  # Define the default network
   default:
-    name: rrddb_test
-    external: false
+    name: rrddb  # Name of the network
+    external: false  # Specify that the network is not external

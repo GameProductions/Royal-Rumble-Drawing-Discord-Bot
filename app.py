@@ -1,5 +1,6 @@
-from flask import Flask, render_template, request, redirect, url_for
-import psycopg2  # Import psycopg2 for PostgreSQL
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+import logging
+import psycopg2
 import asyncio
 import os
 from dotenv import load_dotenv
@@ -9,8 +10,6 @@ import datetime
 from discord import app_commands
 import random
 from tabulate import tabulate
-import nacl.signing
-import nacl.exceptions
 import nacl.signing
 import nacl.exceptions
 
@@ -27,6 +26,7 @@ PUBLIC_KEY = os.getenv('PUBLIC_KEY')
 
 # --- Flask App Setup ---
 app = Flask(__name__)
+logging.basicConfig(level=logging.DEBUG)  # Set logging level for Flask
 
 # Database setup (using PostgreSQL)
 try:
@@ -39,7 +39,7 @@ try:
     cursor = mydb.cursor()
 except psycopg2.Error as e:
     print(f"Database connection error: {e}")
-    exit()  # Exit the script if database connection fails
+    exit()
 
 # Create the tables if they don't exist
 try:
@@ -170,11 +170,11 @@ def verify_signature(public_key, timestamp, body, signature):
     except nacl.exceptions.BadSignatureError:
         print("Bad signature error")
         return False
-    
+
     except ValueError as e:
         print(f"ValueError: {e}")
         return False
-    
+
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return False
@@ -185,7 +185,7 @@ async def convert_users(ctx, users):
         return [await commands.MemberConverter().convert(ctx, user.strip()) for user in users.split(",") if user.strip()]
     except commands.errors.MemberNotFound as e:
         await ctx.send(f"Error: {e}")
-        return []
+        return
 
 # --- Bot Commands ---
 
@@ -196,8 +196,29 @@ async def on_ready():
         await bot.tree.sync()
     except Exception as e:
         print(f"Error syncing command tree: {e}")
-    # Removed check drawings due to issues, will replace in the future
-    # check_drawings.start()
+    check_drawings.start()
+
+@tasks.loop(hours=1)
+async def check_drawings():
+    """
+    Periodically checks for drawings that have reached their time limit and closes them.
+    """
+    try:
+        cursor.execute("SELECT drawing_id, name, time_limit_hours FROM drawings WHERE status = 'open' AND time_limit_hours IS NOT NULL")
+        drawings = cursor.fetchall()
+        for drawing_id, name, time_limit_hours in drawings:
+            cursor.execute("SELECT entry_id, entrant_number FROM entries WHERE drawing_id = %s AND status = 'pending' ORDER BY RANDOM() LIMIT 1", (drawing_id,))
+            winner = cursor.fetchone()
+            if winner is None:
+                await send_message_to_users(name, drawing_id, f"Drawing '{name}' has ended with no eligible entries.")
+            else:
+                winner_entry_id, entrant_number = winner
+                cursor.execute("INSERT INTO results (drawing_id, winner_id) VALUES (%s, %s)", (drawing_id, entrant_number))
+                mydb.commit()
+
+                await send_message_to_users(name, winner_entry_id, f"Congratulations! You have won the drawing '{name}'!")
+    except Exception as e:
+        print(f"Error checking drawings: {e}")
 
 # --- Admin Role ---
 
@@ -237,6 +258,7 @@ def has_admin_permissions():
 
 @bot.tree.command(name="create_drawing", description="Creates a new drawing.")
 @app_commands.describe(name="The name of the drawing.")
+@has_admin_permissions()
 async def create_drawing_slash(interaction: discord.Interaction, name: str):
     """Creates a new drawing (slash command)."""
     try:
@@ -245,12 +267,13 @@ async def create_drawing_slash(interaction: discord.Interaction, name: str):
         await interaction.response.send_message(f"Drawing '{name}' created!")
     except psycopg2.errors.UniqueViolation:
         await interaction.response.send_message(f"A drawing with the name '{name}' already exists.")
-        mydb.rollback()  # Rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await interaction.response.send_message(f"Error creating drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 @bot.command(name="create_drawing")
+@has_admin_permissions()
 async def create_drawing_text(ctx, name: str):
     """Creates a new drawing (text command)."""
     try:
@@ -259,10 +282,10 @@ async def create_drawing_text(ctx, name: str):
         await ctx.send(f"Drawing '{name}' created!")
     except psycopg2.errors.UniqueViolation:
         await ctx.send(f"A drawing with the name '{name}' already exists.")
-        mydb.rollback() #rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await ctx.send(f"Error creating drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 # --- Create Test Drawing ---
 
@@ -277,10 +300,10 @@ async def create_test_drawing_slash(interaction: discord.Interaction, name: str)
         await interaction.response.send_message(f"Test drawing '{name}' created!")
     except psycopg2.errors.UniqueViolation:
         await interaction.response.send_message(f"A drawing with the name '{name}' already exists.")
-        mydb.rollback() #rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await interaction.response.send_message(f"Error creating test drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 @bot.command(name="create_test_drawing")
 @has_admin_permissions()
@@ -292,10 +315,10 @@ async def create_test_drawing_text(ctx, name: str):
         await ctx.send(f"Test drawing '{name}' created!")
     except psycopg2.errors.UniqueViolation:
         await ctx.send(f"A drawing with the name '{name}' already exists.")
-        mydb.rollback() #rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await ctx.send(f"Error creating test drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 # --- Join Drawing ---
 
@@ -315,10 +338,9 @@ async def join_drawing_slash(interaction: discord.Interaction, name: str):
             await interaction.response.send_message(f"Drawing '{name}' is currently closed.")
             return
 
-        # Get all available entrant numbers
         cursor.execute("SELECT entrant_number FROM entries WHERE drawing_id = %s", (drawing_id,))
-        taken_numbers = [row[0] for row in cursor.fetchall()]  # Correctly fetch entrant_number
-        all_numbers = set(range(1, 31))  # Adjust the range if necessary
+        taken_numbers = [row[0] for row in cursor.fetchall()]
+        all_numbers = set(range(1, 31))
         available_numbers = all_numbers - set(taken_numbers)
 
         if not available_numbers:
@@ -336,10 +358,10 @@ async def join_drawing_slash(interaction: discord.Interaction, name: str):
 
     except psycopg2.errors.UniqueViolation:
         await interaction.response.send_message(f"{interaction.user.mention}, you've already joined this drawing!")
-        mydb.rollback() #rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await interaction.response.send_message(f"Error joining drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 @bot.command(name="join_drawing")
 async def join_drawing_text(ctx, name: str):
@@ -356,10 +378,9 @@ async def join_drawing_text(ctx, name: str):
             await ctx.send(f"Drawing '{name}' is currently closed.")
             return
 
-        # Get all available entrant numbers
         cursor.execute("SELECT entrant_number FROM entries WHERE drawing_id = %s", (drawing_id,))
-        taken_numbers = [row[0] for row in cursor.fetchall()]  # Correctly fetch entrant_number
-        all_numbers = set(range(1, 31))  # Adjust the range if necessary
+        taken_numbers = [row[0] for row in cursor.fetchall()]
+        all_numbers = set(range(1, 31))
         available_numbers = all_numbers - set(taken_numbers)
 
         if not available_numbers:
@@ -377,10 +398,10 @@ async def join_drawing_text(ctx, name: str):
 
     except psycopg2.errors.UniqueViolation:
         await ctx.send(f"{ctx.author.mention}, you've already joined this drawing!")
-        mydb.rollback() #rollback on constraint violation
+        mydb.rollback()
     except psycopg2.Error as e:
         await ctx.send(f"Error joining drawing: {e}")
-        mydb.rollback() #rollback on error
+        mydb.rollback()
 
 # --- My Entries ---
 
@@ -521,16 +542,500 @@ async def drawing_entries_text(ctx, name: str, include_archived: str = "no"):
     except Exception as e:
         await ctx.send(f"An unexpected error occurred: {e}")
 
-@bot.command()
-async def test(ctx):
-    """Test command."""
-    await ctx.send("Test command works!")
+# --- Open Drawing ---
+
+@bot.tree.command(name="open_drawing", description="Opens an existing drawing for entries.")
+@app_commands.describe(drawing_name="The name of the drawing.")
+@has_admin_permissions()
+async def open_drawing_slash(interaction: discord.Interaction, drawing_name: str):
+    """Opens an existing drawing for entries (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE drawings SET status = 'open' WHERE drawing_id = %s", (drawing_id[0],))
+        mydb.commit()
+        await interaction.response.send_message(f"Drawing '{drawing_name}' opened successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error opening drawing: {e}")
+
+@bot.command(name="open_drawing")
+@has_admin_permissions()
+async def open_drawing_text(ctx, drawing_name: str):
+    """Opens an existing drawing for entries (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE drawings SET status = 'open' WHERE drawing_id = %s", (drawing_id[0],))
+        mydb.commit()
+        await ctx.send(f"Drawing '{drawing_name}' opened successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error opening drawing: {e}")
+
+# --- Close Drawing ---
+
+@bot.tree.command(name="close_drawing", description="Closes an existing drawing, preventing new entries.")
+@app_commands.describe(drawing_name="The name of the drawing.")
+@has_admin_permissions()
+async def close_drawing_slash(interaction: discord.Interaction, drawing_name: str):
+    """Closes an existing drawing, preventing new entries (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE drawings SET status = 'closed' WHERE drawing_id = %s", (drawing_id[0],))
+        mydb.commit()
+        await interaction.response.send_message(f"Drawing '{drawing_name}' closed successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error closing drawing: {e}")
+
+@bot.command(name="close_drawing")
+@has_admin_permissions()
+async def close_drawing_text(ctx, drawing_name: str):
+    """Closes an existing drawing, preventing new entries (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE drawings SET status = 'closed' WHERE drawing_id = %s", (drawing_id[0],))
+        mydb.commit()
+        await ctx.send(f"Drawing '{drawing_name}' closed successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error closing drawing: {e}")
+
+# --- Add Entry ---
+
+@bot.tree.command(name="add_entry", description="Adds entries to the specified drawing for the mentioned users.")
+@app_commands.describe(drawing_name="The name of the drawing.", users="A comma-separated list of users to add to the drawing.")
+@has_admin_permissions()
+async def add_entry_slash(interaction: discord.Interaction, drawing_name: str, users: str):
+    """Adds entries to the specified drawing for the mentioned users (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id, status FROM drawings WHERE name = %s", (drawing_name,))
+        result = cursor.fetchone()
+        if result is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        drawing_id, status = result
+        if status == 'closed':
+            await interaction.response.send_message(f"Drawing '{drawing_name}' is closed.")
+            return
+
+        user_mentions = [user.strip() for user in users.split(",") if user.strip()]
+        converted_users = []
+        not_found_users = []
+
+        for user_mention in user_mentions:
+            try:
+                member = await commands.MemberConverter().convert(interaction, user_mention)
+                converted_users.append(member)
+            except commands.errors.MemberNotFound:
+                not_found_users.append(user_mention)
+
+        if not_found_users:
+            await interaction.response.send_message(f"Users not found: {', '.join(not_found_users)}")
+
+        for user in converted_users:
+            try:
+                cursor.execute("SELECT entrant_number FROM entries WHERE drawing_id = %s", (drawing_id,))
+                taken_numbers = [row[0] for row in cursor.fetchall()]
+                all_numbers = set(range(1, 31))
+                available_numbers = all_numbers - set(taken_numbers)
+
+                if not available_numbers:
+                    await interaction.response.send_message(f"Drawing '{drawing_name}' is full.")
+                    return
+
+                entrant_number = random.choice(list(available_numbers))
+
+                cursor.execute("INSERT INTO entries (entrant_number, drawing_id) VALUES (%s, %s)", (entrant_number, drawing_id))
+                entry_id = cursor.lastrowid
+                cursor.execute("INSERT INTO entry_users (entry_id, user_id) VALUES (%s, %s)", (entry_id, user.id))
+                mydb.commit()
+
+                await interaction.response.send_message(f"Entry added for {user.mention} in '{drawing_name}' with entrant number {entrant_number}.")
+
+            except Exception as e:
+                mydb.rollback()
+                await interaction.response.send_message(f"Error adding entry for {user.mention}: {e}")
+
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error adding entries: {e}")
+
+@bot.command(name="add_entry")
+@has_admin_permissions()
+async def add_entry_text(ctx, drawing_name: str, *, users: str):
+    """Adds entries to the specified drawing for the mentioned users (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id, status FROM drawings WHERE name = %s", (drawing_name,))
+        result = cursor.fetchone()
+        if result is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        drawing_id, status = result
+        if status == 'closed':
+            await ctx.send(f"Drawing '{drawing_name}' is closed.")
+            return
+
+        user_mentions = [user.strip() for user in users.split(",") if user.strip()]
+        converted_users = []
+        not_found_users = []
+
+        for user_mention in user_mentions:
+            try:
+                member = await commands.MemberConverter().convert(ctx, user_mention)
+                converted_users.append(member)
+            except commands.errors.MemberNotFound:
+                not_found_users.append(user_mention)
+
+        if not_found_users:
+            await ctx.send(f"Users not found: {', '.join(not_found_users)}")
+
+        for user in converted_users:
+            try:
+                cursor.execute("SELECT entrant_number FROM entries WHERE drawing_id = %s", (drawing_id,))
+                taken_numbers = [row[0] for row in cursor.fetchall()]
+                all_numbers = set(range(1, 31))
+                available_numbers = all_numbers - set(taken_numbers)
+
+                if not available_numbers:
+                    await ctx.send(f"Drawing '{drawing_name}' is full.")
+                    return
+
+                entrant_number = random.choice(list(available_numbers))
+
+                cursor.execute("INSERT INTO entries (entrant_number, drawing_id) VALUES (%s, %s)", (entrant_number, drawing_id))
+                entry_id = cursor.lastrowid
+                cursor.execute("INSERT INTO entry_users (entry_id, user_id) VALUES (%s, %s)", (entry_id, user.id))
+                mydb.commit()
+
+                await ctx.send(f"Entry added for {user.mention} in '{drawing_name}' with entrant number {entrant_number}.")
+
+            except Exception as e:
+                mydb.rollback()
+                await ctx.send(f"Error adding entry for {user.mention}: {e}")
+
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error adding entries: {e}")
+
+# --- View Entries ---
+
+@bot.tree.command(name="view_entries", description="Displays the list of entries for the specified drawing.")
+@app_commands.describe(drawing_name="The name of the drawing.")
+async def view_entries_slash(interaction: discord.Interaction, drawing_name: str):
+    """Displays the list of entries for the specified drawing (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("SELECT entrant_number, entrant_name, status, eliminated_by FROM entries WHERE drawing_id = %s", (drawing_id[0],))
+        entries = cursor.fetchall()
+
+        if entries:
+            headers = ["Entrant Number", "Entrant Name", "Status", "Eliminated By"]
+            table = tabulate(entries, headers=headers, tablefmt="fancy_grid")
+            await interaction.response.send_message(f"Entries for '{drawing_name}':\n```\n{table}\n```")
+        else:
+            await interaction.response.send_message(f"No entries found for '{drawing_name}'.")
+    except Exception as e:
+        await interaction.response.send_message(f"Error viewing entries: {e}")
+
+@bot.command(name="view_entries")
+async def view_entries_text(ctx, drawing_name: str):
+    """Displays the list of entries for the specified drawing (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("SELECT entrant_number, entrant_name, status, eliminated_by FROM entries WHERE drawing_id = %s", (drawing_id[0],))
+        entries = cursor.fetchall()
+
+        if entries:
+            headers = ["Entrant Number", "Entrant Name", "Status", "Eliminated By"]
+            table = tabulate(entries, headers=headers, tablefmt="fancy_grid")
+            await ctx.send(f"Entries for '{drawing_name}':\n```\n{table}\n```")
+        else:
+            await ctx.send(f"No entries found for '{drawing_name}'.")
+    except Exception as e:
+        await ctx.send(f"Error viewing entries: {e}")
+
+# --- Eliminate Entry ---
+
+@bot.tree.command(name="eliminate_entry", description="Eliminates an entry from the specified drawing.")
+@app_commands.describe(drawing_name="The name of the drawing.", entrant_number="The entrant number to eliminate.")
+@has_admin_permissions()
+async def eliminate_entry_slash(interaction: discord.Interaction, drawing_name: str, entrant_number: int):
+    """Eliminates an entry from the specified drawing (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE entries SET status = 'eliminated', eliminated_by = %s WHERE drawing_id = %s AND entrant_number = %s", (interaction.user.name, drawing_id[0], entrant_number))
+        mydb.commit()
+        await interaction.response.send_message(f"Entry {entrant_number} eliminated from '{drawing_name}'.")
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error eliminating entry: {e}")
+
+@bot.command(name="eliminate_entry")
+@has_admin_permissions()
+async def eliminate_entry_text(ctx, drawing_name: str, entrant_number: int):
+    """Eliminates an entry from the specified drawing (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("UPDATE entries SET status = 'eliminated', eliminated_by = %s WHERE drawing_id = %s AND entrant_number = %s", (ctx.author.name, drawing_id[0], entrant_number))
+        mydb.commit()
+        await ctx.send(f"Entry {entrant_number} eliminated from '{drawing_name}'.")
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error eliminating entry: {e}")
+
+# --- Draw Winner ---
+
+@bot.tree.command(name="draw_winner", description="Randomly draws a winner from the remaining entries.")
+@app_commands.describe(drawing_name="The name of the drawing.")
+@has_admin_permissions()
+async def draw_winner_slash(interaction: discord.Interaction, drawing_name: str):
+    """Randomly draws a winner from the remaining entries (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("SELECT entry_id, entrant_number FROM entries WHERE drawing_id = %s AND status = 'pending' ORDER BY RANDOM() LIMIT 1", (drawing_id[0],))
+        winner = cursor.fetchone()
+        if winner is None:
+            await interaction.response.send_message(f"No eligible entries found for '{drawing_name}'.")
+            return
+
+        winner_entry_id, entrant_number = winner
+        cursor.execute("INSERT INTO results (drawing_id, winner_id) VALUES (%s, %s)", (drawing_id[0], entrant_number))
+        mydb.commit()
+
+        await send_message_to_users(drawing_name, winner_entry_id, f"Congratulations! You have won the drawing '{drawing_name}'!")
+        await interaction.response.send_message(f"The winner of '{drawing_name}' is entrant number {entrant_number}!")
+
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error drawing winner: {e}")
+
+@bot.command(name="draw_winner")
+@has_admin_permissions()
+async def draw_winner_text(ctx, drawing_name: str):
+    """Randomly draws a winner from the remaining entries (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id FROM drawings WHERE name = %s", (drawing_name,))
+        drawing_id = cursor.fetchone()
+        if drawing_id is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        cursor.execute("SELECT entry_id, entrant_number FROM entries WHERE drawing_id = %s AND status = 'pending' ORDER BY RANDOM() LIMIT 1", (drawing_id[0],))
+        winner = cursor.fetchone()
+        if winner is None:
+            await ctx.send(f"No eligible entries found for '{drawing_name}'.")
+            return
+
+        winner_entry_id, entrant_number = winner
+        cursor.execute("INSERT INTO results (drawing_id, winner_id) VALUES (%s, %s)", (drawing_id[0], entrant_number))
+        mydb.commit()
+
+        await send_message_to_users(drawing_name, winner_entry_id, f"Congratulations! You have won the drawing '{drawing_name}'!")
+        await ctx.send(f"The winner of '{drawing_name}' is entrant number {entrant_number}!")
+
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error drawing winner: {e}")
+
+# --- Archive Drawing ---
+
+@bot.tree.command(name="archive_drawing", description="Archives the specified drawing.")
+@app_commands.describe(drawing_name="The name of the drawing to archive.")
+@has_admin_permissions()
+async def archive_drawing_slash(interaction: discord.Interaction, drawing_name: str):
+    """Archives the specified drawing (slash command)."""
+    try:
+        cursor.execute("SELECT drawing_id, status FROM drawings WHERE name = %s", (drawing_name,))
+        drawing = cursor.fetchone()
+        if drawing is None:
+            await interaction.response.send_message(f"Drawing '{drawing_name}' not found.")
+            return
+
+        drawing_id, status = drawing
+        cursor.execute("INSERT INTO archived_drawings (drawing_id, name, status) VALUES (%s, %s, %s)", (drawing_id, drawing_name, status))
+        cursor.execute("INSERT INTO archived_entries (entry_id, entrant_number, entrant_name, drawing_id, eliminated_by, status) SELECT entry_id, entrant_number, entrant_name, drawing_id, eliminated_by, status FROM entries WHERE drawing_id = %s", (drawing_id,))
+        cursor.execute("INSERT INTO archived_entry_users (entry_id, user_id) SELECT entry_id, user_id FROM entry_users WHERE entry_id IN (SELECT entry_id FROM entries WHERE drawing_id = %s)", (drawing_id,))
+        cursor.execute("DELETE FROM entries WHERE drawing_id = %s", (drawing_id,))
+        cursor.execute("DELETE FROM entry_users WHERE entry_id IN (SELECT entry_id FROM entries WHERE drawing_id = %s)", (drawing_id,))
+        cursor.execute("DELETE FROM drawings WHERE drawing_id = %s", (drawing_id,))
+        mydb.commit()
+        await interaction.response.send_message(f"Drawing '{drawing_name}' archived successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await interaction.response.send_message(f"Error archiving drawing: {e}")
+
+@bot.command(name="archive_drawing")
+@has_admin_permissions()
+async def archive_drawing_text(ctx, drawing_name: str):
+    """Archives the specified drawing (text command)."""
+    try:
+        cursor.execute("SELECT drawing_id, status FROM drawings WHERE name = %s", (drawing_name,))
+        drawing = cursor.fetchone()
+        if drawing is None:
+            await ctx.send(f"Drawing '{drawing_name}' not found.")
+            return
+
+        drawing_id, status = drawing
+        cursor.execute("INSERT INTO archived_drawings (drawing_id, name, status) VALUES (%s, %s, %s)", (drawing_id, drawing_name, status))
+        cursor.execute("INSERT INTO archived_entries (entry_id, entrant_number, entrant_name, drawing_id, eliminated_by, status) SELECT entry_id, entrant_number, entrant_name, drawing_id, eliminated_by, status FROM entries WHERE drawing_id = %s", (drawing_id,))
+        cursor.execute("INSERT INTO archived_entry_users (entry_id, user_id) SELECT entry_id, user_id FROM entry_users WHERE entry_id IN (SELECT entry_id FROM entries WHERE drawing_id = %s)", (drawing_id,))
+        cursor.execute("DELETE FROM entries WHERE drawing_id = %s", (drawing_id,))
+        cursor.execute("DELETE FROM entry_users WHERE entry_id IN (SELECT entry_id FROM entries WHERE drawing_id = %s)", (drawing_id,))
+        cursor.execute("DELETE FROM drawings WHERE drawing_id = %s", (drawing_id,))
+        mydb.commit()
+        await ctx.send(f"Drawing '{drawing_name}' archived successfully.")
+    except Exception as e:
+        mydb.rollback()
+        await ctx.send(f"Error archiving drawing: {e}")
+
+# --- Available Commands ---
+
+async def get_available_commands(ctx):
+    """
+    Returns a list of available commands for the user based on their permissions.
+    """
+    available_commands = []
+    for command in bot.commands:
+        try:
+            # Check if the user has permission to run the command
+            if await command.can_run(ctx):  # Use 'await' since can_run is a coroutine
+                available_commands.append(command.name)
+        except commands.errors.CommandError:
+            # Ignore commands the user doesn't have permission for
+            pass
+
+    # Sort the list of commands alphabetically
+    available_commands.sort()
+
+    return available_commands
 
 
-@bot.command()
-async def test_admin(ctx):
-    """Test command."""
-    if admin_role_id is not None:
-        await ctx.send(f"Admin role id is {admin_role_id}")
+@bot.tree.command(name="available_commands", description="Shows the commands you can use.")
+async def available_commands_slash(interaction: discord.Interaction):
+    """
+    Shows the available commands for the user (slash command).
+    """
+    try:
+        # Get the available commands for the user in the current context
+        available_commands = await get_available_commands(interaction)  # Use 'await' since get_available_commands is a coroutine
+
+        if available_commands:
+            # Format the commands into a message
+            commands_message = "Available commands:\n"
+            for command in available_commands:
+                commands_message += f"- `{command}`\n"
+            await interaction.response.send_message(commands_message, ephemeral=True)
+        else:
+            await interaction.response.send_message("You have no available commands in this context.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Error getting available commands: {e}")
 
 
+@bot.command(name="available_commands")
+async def available_commands_text(ctx):
+    """
+    Shows the available commands for the user (text command).
+    """
+    try:
+        # Get the available commands for the user in the current context
+        available_commands = await get_available_commands(ctx)  # Use 'await' since get_available_commands is a coroutine
+
+        if available_commands:
+            # Format the commands into a message
+            commands_message = "Available commands:\n"
+            for command in available_commands:
+                commands_message += f"- `{command}`\n"
+            await ctx.send(commands_message)
+        else:
+            await ctx.send("You have no available commands in this context.")
+    except Exception as e:
+        await ctx.send(f"Error getting available commands: {e}")
+
+# --- Flask Routes ---
+
+@app.route('/interactions', methods=['POST'])
+async def interactions():
+    """
+    Route for handling Discord interactions.
+    """
+    # Log the request
+    logging.debug("Received request:")
+    logging.debug(f"Headers: {request.headers}")
+    logging.debug(f"Body: {await request.get_data()}")  # Log the raw body
+
+    try:
+        # Verify the signature
+        signature = request.headers.get('X-Signature-Ed25519')
+        timestamp = request.headers.get('X-Signature-Timestamp')
+        body = request.data.decode("utf-8")
+
+        if verify_signature(PUBLIC_KEY, timestamp, body, signature):
+            # Handle the interaction
+            interaction = discord.Interaction.from_json(body)
+            await bot.process_application_commands(interaction)
+            return ('', 200)
+        else:
+            return ('invalid request signature', 401)
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return ('', 500)
+
+@app.route("/test")
+async def test():
+    """
+    Route for testing the Flask app.
+    """
+    return "Test route works!"
+
+if __name__ == '__main__':
+    # Run the Flask app and the Discord bot concurrently
+    loop = asyncio.get_event_loop()
+    loop.create_task(bot.start(DISCORD_BOT_TOKEN))
+    app.run(debug=True, use_reloader=False)

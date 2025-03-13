@@ -1,18 +1,33 @@
 # Use a newer Python version
 FROM python:3.12-slim
 
+# Define build arguments
+ARG DB_USER
+ARG DB_PASSWORD
+ARG DB_NAME
+
+# Create a directory for the application
+RUN mkdir /app
+
+# Create a directory for the database
+RUN mkdir /database
+
+# Set the working directory in the container
 WORKDIR /app
 
-# Upgrade pip to the latest version
-RUN python -m pip install --upgrade pip
+# Create the initdb.sql file using environment variables
+RUN mkdir -p /docker-entrypoint-initdb.d/ && \
+    echo "CREATE USER ${DB_USER} WITH PASSWORD '${DB_PASSWORD}';" > /docker-entrypoint-initdb.d/initdb.sql && \
+    echo "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" >> /docker-entrypoint-initdb.d/initdb.sql
 
 # Copy the requirements file
 COPY requirements.txt .
 
+# Install build tools, postgresql development files
+RUN apt-get update && apt-get install -y build-essential libpq-dev
+
 # Install dependencies with trusted hosts
-#RUN PIP_DISABLE_PIP_VERSION_CHECK=1 pip install -r requirements.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
 RUN pip install --no-cache-dir -r requirements.txt
-#RUN pip install -r requirements.txt --index-url https://pypi.org/simple
 
 # Install Git
 RUN apt-get update && apt-get install -y git
@@ -27,4 +42,4 @@ COPY . .
 EXPOSE 8000
 
 # Define the command to run your bot and web app in the background
-CMD ["sh", "-c", "python bot.py & gunicorn --bind 0.0.0.0:8000 app:app"]
+CMD ["sh", "-c", "python bot.py & gunicorn --bind 0.0.0.0:8000 --log-level debug app:app"]
