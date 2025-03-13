@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+import logging
 import psycopg2
 import asyncio
 import os
@@ -25,6 +26,7 @@ PUBLIC_KEY = os.getenv('PUBLIC_KEY')
 
 # --- Flask App Setup ---
 app = Flask(__name__)
+logging.basicConfig(level=logging.DEBUG)  # Set logging level for Flask
 
 # Database setup (using PostgreSQL)
 try:
@@ -1003,6 +1005,11 @@ async def interactions():
     """
     Route for handling Discord interactions.
     """
+    # Log the request
+    logging.debug("Received request:")
+    logging.debug(f"Headers: {request.headers}")
+    logging.debug(f"Body: {await request.get_data()}")  # Log the raw body
+
     try:
         # Verify the signature
         signature = request.headers.get('X-Signature-Ed25519')
@@ -1019,6 +1026,13 @@ async def interactions():
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return ('', 500)
+
+@app.route("/test")
+async def test():
+    """
+    Route for testing the Flask app.
+    """
+    return "Test route works!"
 
 if __name__ == '__main__':
     # Run the Flask app and the Discord bot concurrently

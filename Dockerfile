@@ -42,4 +42,4 @@ COPY . .
 EXPOSE 8000
 
 # Define the command to run your bot and web app in the background
-CMD ["sh", "-c", "python bot.py & gunicorn --bind 0.0.0.0:8000 app:app"]
+CMD ["sh", "-c", "python bot.py & gunicorn --bind 0.0.0.0:8000 --log-level debug app:app"]
